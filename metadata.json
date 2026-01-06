@@ -1,0 +1,5 @@
+{
+  "name": "CommandDeck - Tactical Observability",
+  "description": "A high-performance tactical landing page for CommandDeck, the RTS-style observability suite for AI Agents. Visualizing the Model Context Protocol in real-time.",
+  "requestFramePermissions": []
+}

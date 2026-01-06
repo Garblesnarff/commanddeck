@@ -1,20 +1,48 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# CommandDeck
 
-# Run and deploy your AI Studio app
+A tactical observability platform for real-time system monitoring and visualization.
 
-This contains everything you need to run your app locally.
+## Monorepo Structure
 
-View your app in AI Studio: https://ai.studio/apps/drive/1DVblFNPHDI5vNKyMMbQ5Jfdknuasa9bM
+```
+commanddeck/
+├── packages/
+│   ├── landing/     # Marketing landing page
+│   └── app/         # Interactive visualization tool
+├── package.json     # Root workspace config
+└── README.md
+```
 
-## Run Locally
+## Getting Started
 
-**Prerequisites:**  Node.js
+**Prerequisites:** [Bun](https://bun.sh)
 
+Install all dependencies from the root:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```bash
+bun install
+```
+
+## Packages
+
+### Landing Page
+
+```bash
+cd packages/landing
+bun run dev
+```
+
+The tactical landing page showcasing CommandDeck features.
+
+### App
+
+```bash
+cd packages/app
+bun run dev
+```
+
+The interactive visualization tool with real-time unit control.
+
+## Development
+
+This monorepo uses Bun workspaces. All packages can be installed from the root directory.

@@ -1,277 +1,276 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
-import { Application, extend, useApplication, useTick } from '@pixi/react'
-import { Container, Graphics } from 'pixi.js'
+import { useRef, useState, useCallback } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { OrbitControls, Grid } from '@react-three/drei'
+import * as THREE from 'three'
 
-extend({ Container, Graphics })
-
-const CYAN = 0x00f3ff
-const GREEN = 0x00ff88
-const BACKGROUND = 0x0f172a
+const CYAN = '#00f3ff'
+const GREEN = '#00ff88'
+const BACKGROUND = '#0f172a'
 const LERP_SPEED = 0.08
 
-interface UnitProps {
-  targetX: number
-  targetY: number
-  onPositionUpdate: (x: number, y: number) => void
-}
+// Unit component - a sci-fi styled cylinder with glow
+function Unit({ targetPosition }: { targetPosition: THREE.Vector3 }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const ringRef = useRef<THREE.Mesh>(null)
+  const positionRef = useRef(new THREE.Vector3(0, 0.5, 0))
 
-function Unit({ targetX, targetY, onPositionUpdate }: UnitProps) {
-  const posRef = useRef({ x: 400, y: 300 })
-  const graphicsRef = useRef<Graphics>(null)
-  const selectionRef = useRef<Graphics>(null)
-  const rotationRef = useRef(0)
+  useFrame((_, delta) => {
+    if (!groupRef.current) return
 
-  useTick((ticker) => {
-    const pos = posRef.current
-    const dx = targetX - pos.x
-    const dy = targetY - pos.y
-    const distance = Math.sqrt(dx * dx + dy * dy)
+    // Smoothly lerp to target position
+    const target = new THREE.Vector3(targetPosition.x, 0.5, targetPosition.z)
+    positionRef.current.lerp(target, LERP_SPEED)
+    groupRef.current.position.copy(positionRef.current)
 
-    if (distance > 1) {
-      pos.x += dx * LERP_SPEED
-      pos.y += dy * LERP_SPEED
-      onPositionUpdate(pos.x, pos.y)
-    }
-
-    rotationRef.current += ticker.deltaTime * 0.02
-
-    if (graphicsRef.current) {
-      const g = graphicsRef.current
-      g.clear()
-      g.position.set(pos.x, pos.y)
-
-      // Unit body - hexagonal shape
-      g.fill({ color: CYAN, alpha: 0.3 })
-      g.stroke({ color: CYAN, width: 2 })
-      const size = 20
-      g.poly([
-        size, 0,
-        size * 0.5, size * 0.866,
-        -size * 0.5, size * 0.866,
-        -size, 0,
-        -size * 0.5, -size * 0.866,
-        size * 0.5, -size * 0.866
-      ])
-      g.fill()
-      g.stroke()
-
-      // Inner diamond
-      g.fill({ color: CYAN, alpha: 0.8 })
-      const innerSize = 8
-      g.poly([
-        0, -innerSize,
-        innerSize, 0,
-        0, innerSize,
-        -innerSize, 0
-      ])
-      g.fill()
-
-      // Direction indicator
-      g.stroke({ color: CYAN, width: 2 })
-      g.moveTo(0, -size - 5)
-      g.lineTo(0, -size - 15)
-      g.stroke()
-    }
-
-    if (selectionRef.current) {
-      const s = selectionRef.current
-      s.clear()
-      s.position.set(pos.x, pos.y)
-      s.rotation = rotationRef.current
-
-      // Rotating selection ring
-      s.stroke({ color: GREEN, width: 2, alpha: 0.8 })
-      s.arc(0, 0, 35, 0, Math.PI * 0.5)
-      s.stroke()
-
-      s.stroke({ color: GREEN, width: 2, alpha: 0.6 })
-      s.arc(0, 0, 35, Math.PI, Math.PI * 1.5)
-      s.stroke()
-
-      // Corner brackets
-      const bracketSize = 8
-      const offset = 40
-      s.stroke({ color: GREEN, width: 1.5, alpha: 0.9 })
-
-      // Top-left
-      s.moveTo(-offset, -offset + bracketSize)
-      s.lineTo(-offset, -offset)
-      s.lineTo(-offset + bracketSize, -offset)
-      s.stroke()
-
-      // Top-right
-      s.moveTo(offset - bracketSize, -offset)
-      s.lineTo(offset, -offset)
-      s.lineTo(offset, -offset + bracketSize)
-      s.stroke()
-
-      // Bottom-left
-      s.moveTo(-offset, offset - bracketSize)
-      s.lineTo(-offset, offset)
-      s.lineTo(-offset + bracketSize, offset)
-      s.stroke()
-
-      // Bottom-right
-      s.moveTo(offset - bracketSize, offset)
-      s.lineTo(offset, offset)
-      s.lineTo(offset, offset - bracketSize)
-      s.stroke()
+    // Rotate selection ring
+    if (ringRef.current) {
+      ringRef.current.rotation.y += delta * 0.5
     }
   })
 
   return (
-    <>
-      <pixiGraphics ref={selectionRef} />
-      <pixiGraphics ref={graphicsRef} />
-    </>
+    <group ref={groupRef} position={[0, 0.5, 0]}>
+      {/* Main unit body - hexagonal prism */}
+      <mesh castShadow>
+        <cylinderGeometry args={[0.4, 0.5, 0.8, 6]} />
+        <meshStandardMaterial
+          color={CYAN}
+          emissive={CYAN}
+          emissiveIntensity={0.3}
+          metalness={0.8}
+          roughness={0.2}
+        />
+      </mesh>
+
+      {/* Top cap with glow */}
+      <mesh position={[0, 0.45, 0]} castShadow>
+        <cylinderGeometry args={[0.25, 0.35, 0.15, 6]} />
+        <meshStandardMaterial
+          color={CYAN}
+          emissive={CYAN}
+          emissiveIntensity={0.6}
+          metalness={0.9}
+          roughness={0.1}
+        />
+      </mesh>
+
+      {/* Inner core light */}
+      <pointLight color={CYAN} intensity={2} distance={3} />
+
+      {/* Selection ring - rotates around unit */}
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
+        <ringGeometry args={[0.7, 0.75, 32]} />
+        <meshBasicMaterial color={GREEN} transparent opacity={0.8} side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* Selection brackets - 4 corner indicators */}
+      <SelectionBrackets />
+    </group>
   )
 }
 
-function MoveIndicator({ x, y, visible }: { x: number; y: number; visible: boolean }) {
-  const graphicsRef = useRef<Graphics>(null)
-  const alphaRef = useRef(1)
+// Corner bracket indicators for selection
+function SelectionBrackets() {
+  const size = 0.9
+  const bracketLength = 0.2
+  const material = <meshBasicMaterial color={GREEN} transparent opacity={0.9} />
 
-  useTick(() => {
-    if (graphicsRef.current) {
-      const g = graphicsRef.current
-      g.clear()
+  const Bracket = ({ position, rotation }: { position: [number, number, number]; rotation: number }) => (
+    <group position={position} rotation={[Math.PI / 2, rotation, 0]}>
+      <mesh position={[bracketLength / 2, 0, 0]}>
+        <boxGeometry args={[bracketLength, 0.02, 0.02]} />
+        {material}
+      </mesh>
+      <mesh position={[0, bracketLength / 2, 0]}>
+        <boxGeometry args={[0.02, bracketLength, 0.02]} />
+        {material}
+      </mesh>
+    </group>
+  )
 
-      if (visible && alphaRef.current > 0) {
-        alphaRef.current = Math.max(0, alphaRef.current - 0.02)
+  return (
+    <group position={[0, -0.4, 0]}>
+      <Bracket position={[-size, 0, -size]} rotation={0} />
+      <Bracket position={[size, 0, -size]} rotation={Math.PI / 2} />
+      <Bracket position={[size, 0, size]} rotation={Math.PI} />
+      <Bracket position={[-size, 0, size]} rotation={-Math.PI / 2} />
+    </group>
+  )
+}
 
-        g.position.set(x, y)
-        const alpha = alphaRef.current
+// Move target indicator - pulsing ring on the ground
+function MoveIndicator({ position, visible }: { position: THREE.Vector3; visible: boolean }) {
+  const ringRef = useRef<THREE.Mesh>(null)
+  const outerRingRef = useRef<THREE.Mesh>(null)
+  const scaleRef = useRef(1)
+  const opacityRef = useRef(1)
 
-        // Pulsing ring
-        g.stroke({ color: GREEN, width: 2, alpha: alpha * 0.8 })
-        g.circle(0, 0, 15 + (1 - alpha) * 20)
-        g.stroke()
+  useFrame((_, delta) => {
+    if (!visible || !ringRef.current || !outerRingRef.current) return
 
-        // Center cross
-        g.stroke({ color: GREEN, width: 1, alpha })
-        g.moveTo(-8, 0)
-        g.lineTo(8, 0)
-        g.moveTo(0, -8)
-        g.lineTo(0, 8)
-        g.stroke()
-      }
+    // Pulse animation
+    scaleRef.current += delta * 2
+    opacityRef.current = Math.max(0, 1 - scaleRef.current * 0.3)
+
+    const scale = 1 + scaleRef.current * 0.5
+    outerRingRef.current.scale.set(scale, scale, 1)
+
+    const mat = outerRingRef.current.material as THREE.MeshBasicMaterial
+    mat.opacity = opacityRef.current * 0.6
+
+    // Reset after fade
+    if (opacityRef.current <= 0) {
+      scaleRef.current = 1
+      opacityRef.current = 1
     }
   })
 
-  useEffect(() => {
-    if (visible) {
-      alphaRef.current = 1
-    }
-  }, [x, y, visible])
+  if (!visible) return null
 
-  return <pixiGraphics ref={graphicsRef} />
+  return (
+    <group position={[position.x, 0.02, position.z]}>
+      {/* Static inner ring */}
+      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.15, 0.2, 32]} />
+        <meshBasicMaterial color={GREEN} transparent opacity={0.8} />
+      </mesh>
+
+      {/* Pulsing outer ring */}
+      <mesh ref={outerRingRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.3, 0.35, 32]} />
+        <meshBasicMaterial color={GREEN} transparent opacity={0.6} />
+      </mesh>
+
+      {/* Center cross */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.3, 0.03]} />
+        <meshBasicMaterial color={GREEN} transparent opacity={0.9} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, Math.PI / 2]}>
+        <planeGeometry args={[0.3, 0.03]} />
+        <meshBasicMaterial color={GREEN} transparent opacity={0.9} />
+      </mesh>
+    </group>
+  )
 }
 
-function GridBackground() {
-  const graphicsRef = useRef<Graphics>(null)
-  const { app } = useApplication()
+// Ground plane with click detection
+function Ground({ onGroundClick }: { onGroundClick: (point: THREE.Vector3) => void }) {
+  const meshRef = useRef<THREE.Mesh>(null)
 
-  useEffect(() => {
-    if (graphicsRef.current && app) {
-      const g = graphicsRef.current
-      g.clear()
+  const handlePointerDown = useCallback((e: THREE.Event & { point: THREE.Vector3 }) => {
+    e.stopPropagation()
+    onGroundClick(e.point)
+  }, [onGroundClick])
 
-      const width = app.screen.width
-      const height = app.screen.height
-      const gridSize = 50
-
-      // Grid lines
-      g.stroke({ color: CYAN, width: 1, alpha: 0.1 })
-
-      for (let x = 0; x <= width; x += gridSize) {
-        g.moveTo(x, 0)
-        g.lineTo(x, height)
-      }
-
-      for (let y = 0; y <= height; y += gridSize) {
-        g.moveTo(0, y)
-        g.lineTo(width, y)
-      }
-      g.stroke()
-
-      // Subtle gradient overlay from edges
-      g.fill({ color: BACKGROUND, alpha: 0.5 })
-      g.rect(0, 0, 100, height)
-      g.rect(width - 100, 0, 100, height)
-      g.fill()
-    }
-  }, [app])
-
-  return <pixiGraphics ref={graphicsRef} />
+  return (
+    <mesh
+      ref={meshRef}
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, 0, 0]}
+      receiveShadow
+      onPointerDown={handlePointerDown}
+    >
+      <planeGeometry args={[100, 100]} />
+      <meshStandardMaterial
+        color={BACKGROUND}
+        metalness={0.1}
+        roughness={0.9}
+      />
+    </mesh>
+  )
 }
 
+// Main 3D scene
 function Scene() {
-  const { app } = useApplication()
-  const [target, setTarget] = useState({ x: 400, y: 300 })
-  const [unitPos, setUnitPos] = useState({ x: 400, y: 300 })
-  const [moveIndicator, setMoveIndicator] = useState({ x: 0, y: 0, visible: false, key: 0 })
+  const [targetPosition, setTargetPosition] = useState(new THREE.Vector3(0, 0, 0))
+  const [moveIndicator, setMoveIndicator] = useState({
+    position: new THREE.Vector3(),
+    visible: false,
+    key: 0
+  })
 
-  const handleClick = useCallback((e: PointerEvent) => {
-    if (app) {
-      const rect = app.canvas.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
-      setTarget({ x, y })
-      setMoveIndicator({ x, y, visible: true, key: Date.now() })
-    }
-  }, [app])
-
-  useEffect(() => {
-    if (app) {
-      app.canvas.addEventListener('pointerdown', handleClick)
-      return () => app.canvas.removeEventListener('pointerdown', handleClick)
-    }
-  }, [app, handleClick])
+  const handleGroundClick = useCallback((point: THREE.Vector3) => {
+    setTargetPosition(new THREE.Vector3(point.x, 0, point.z))
+    setMoveIndicator({
+      position: point.clone(),
+      visible: true,
+      key: Date.now()
+    })
+  }, [])
 
   return (
     <>
-      <GridBackground />
-      <MoveIndicator
-        x={moveIndicator.x}
-        y={moveIndicator.y}
-        visible={moveIndicator.visible}
-        key={moveIndicator.key}
+      {/* Lighting */}
+      <ambientLight intensity={0.2} />
+      <directionalLight
+        position={[10, 20, 10]}
+        intensity={1}
+        castShadow
+        shadow-mapSize={[2048, 2048]}
+        shadow-camera-far={50}
+        shadow-camera-left={-20}
+        shadow-camera-right={20}
+        shadow-camera-top={20}
+        shadow-camera-bottom={-20}
       />
-      <Unit
-        targetX={target.x}
-        targetY={target.y}
-        onPositionUpdate={(x, y) => setUnitPos({ x, y })}
+
+      {/* Subtle cyan accent light */}
+      <pointLight position={[0, 10, 0]} color={CYAN} intensity={0.5} />
+
+      {/* Ground */}
+      <Ground onGroundClick={handleGroundClick} />
+
+      {/* Grid overlay */}
+      <Grid
+        position={[0, 0.01, 0]}
+        args={[100, 100]}
+        cellSize={1}
+        cellThickness={0.5}
+        cellColor={CYAN}
+        sectionSize={5}
+        sectionThickness={1}
+        sectionColor={CYAN}
+        fadeDistance={50}
+        fadeStrength={1}
+        followCamera={false}
+        infiniteGrid={true}
+      />
+
+      {/* Unit */}
+      <Unit targetPosition={targetPosition} />
+
+      {/* Move indicator */}
+      <MoveIndicator
+        key={moveIndicator.key}
+        position={moveIndicator.position}
+        visible={moveIndicator.visible}
+      />
+
+      {/* Camera controls */}
+      <OrbitControls
+        makeDefault
+        enablePan={true}
+        enableZoom={true}
+        enableRotate={true}
+        minPolarAngle={Math.PI / 6}
+        maxPolarAngle={Math.PI / 2.5}
+        minDistance={5}
+        maxDistance={50}
+        target={[0, 0, 0]}
       />
     </>
   )
 }
 
 function App() {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
-
-  useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        setDimensions({
-          width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight
-        })
-      }
-    }
-
-    updateDimensions()
-    window.addEventListener('resize', updateDimensions)
-    return () => window.removeEventListener('resize', updateDimensions)
-  }, [])
-
   return (
     <div style={{
       width: '100vw',
       height: '100vh',
       display: 'flex',
       flexDirection: 'column',
-      background: '#0f172a',
+      background: BACKGROUND,
       fontFamily: "'Orbitron', sans-serif"
     }}>
       {/* Header Bar */}
@@ -283,7 +282,8 @@ function App() {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0 24px',
-        backdropFilter: 'blur(8px)'
+        backdropFilter: 'blur(8px)',
+        zIndex: 10
       }}>
         <div style={{
           display: 'flex',
@@ -337,25 +337,22 @@ function App() {
         </div>
       </header>
 
-      {/* Canvas Container */}
-      <div
-        ref={containerRef}
-        style={{
-          flex: 1,
-          position: 'relative',
-          cursor: 'crosshair'
-        }}
-      >
-        <Application
-          width={dimensions.width}
-          height={dimensions.height}
-          backgroundColor={BACKGROUND}
-          antialias={true}
-          resolution={window.devicePixelRatio || 1}
-          autoDensity={true}
+      {/* 3D Canvas */}
+      <div style={{ flex: 1, cursor: 'crosshair' }}>
+        <Canvas
+          shadows
+          camera={{
+            position: [15, 15, 15],
+            fov: 50,
+            near: 0.1,
+            far: 1000
+          }}
+          gl={{ antialias: true }}
         >
+          <color attach="background" args={[BACKGROUND]} />
+          <fog attach="fog" args={[BACKGROUND, 30, 80]} />
           <Scene />
-        </Application>
+        </Canvas>
       </div>
 
       {/* Bottom Status Bar */}
@@ -369,10 +366,11 @@ function App() {
         padding: '0 24px',
         fontSize: '9px',
         letterSpacing: '1px',
-        color: 'rgba(255,255,255,0.4)'
+        color: 'rgba(255,255,255,0.4)',
+        zIndex: 10
       }}>
-        <span>CLICK TO MOVE UNIT</span>
-        <span>TACTICAL_INTERFACE v0.1.0</span>
+        <span>CLICK GROUND TO MOVE UNIT • DRAG TO ORBIT • SCROLL TO ZOOM</span>
+        <span>TACTICAL_INTERFACE v0.2.0</span>
       </footer>
 
       <style>{`

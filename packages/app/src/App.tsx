@@ -1,42 +1,83 @@
-import { useRef, useState, useCallback } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { useRef, useEffect, useCallback } from 'react'
+import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
 import * as THREE from 'three'
+import { useWebSocket } from './hooks/useWebSocket'
+import { useAgentStore, useAgents, useMoveIndicators, type Agent, type AgentType } from './stores/agentStore'
 
-const CYAN = '#00f3ff'
-const GREEN = '#00ff88'
 const BACKGROUND = '#0f172a'
-const LERP_SPEED = 0.08
+const LERP_SPEED = 0.06
 
-// Unit component - a sci-fi styled cylinder with glow
-function Unit({ targetPosition }: { targetPosition: THREE.Vector3 }) {
+// Agent type colors
+const AGENT_COLORS: Record<AgentType, { primary: string; emissive: string }> = {
+  scout: { primary: '#00f3ff', emissive: '#00f3ff' },    // Cyan
+  worker: { primary: '#f59e0b', emissive: '#f59e0b' },   // Amber
+  coder: { primary: '#8b5cf6', emissive: '#8b5cf6' },    // Purple
+  architect: { primary: '#3b82f6', emissive: '#3b82f6' }, // Blue
+  debugger: { primary: '#ef4444', emissive: '#ef4444' }   // Red
+}
+
+// Status colors
+const STATUS_COLORS = {
+  idle: '#00ff88',
+  moving: '#00ff88',
+  working: '#f59e0b',
+  error: '#ef4444'
+}
+
+// Unit component - renders a single agent
+function Unit({ agent }: { agent: Agent }) {
   const groupRef = useRef<THREE.Group>(null)
   const ringRef = useRef<THREE.Mesh>(null)
-  const positionRef = useRef(new THREE.Vector3(0, 0.5, 0))
+  const positionRef = useRef(new THREE.Vector3(...agent.position))
+  const flashRef = useRef(0)
+
+  const colors = AGENT_COLORS[agent.type]
+  const statusColor = STATUS_COLORS[agent.status]
 
   useFrame((_, delta) => {
     if (!groupRef.current) return
 
     // Smoothly lerp to target position
-    const target = new THREE.Vector3(targetPosition.x, 0.5, targetPosition.z)
+    const target = agent.targetPosition
+      ? new THREE.Vector3(agent.targetPosition[0], 0.5, agent.targetPosition[2])
+      : new THREE.Vector3(positionRef.current.x, 0.5, positionRef.current.z)
+
     positionRef.current.lerp(target, LERP_SPEED)
     groupRef.current.position.copy(positionRef.current)
 
+    // Update agent position in store when close enough to target
+    if (agent.targetPosition) {
+      const dist = positionRef.current.distanceTo(target)
+      if (dist < 0.1) {
+        // Arrived at destination
+        useAgentStore.getState().updateAgent(agent.id, {
+          position: [positionRef.current.x, positionRef.current.y, positionRef.current.z],
+          status: agent.status === 'moving' ? 'idle' : agent.status
+        })
+      }
+    }
+
     // Rotate selection ring
     if (ringRef.current) {
-      ringRef.current.rotation.y += delta * 0.5
+      ringRef.current.rotation.y += delta * (agent.status === 'working' ? 2 : 0.5)
+    }
+
+    // Flash effect decay
+    if (flashRef.current > 0) {
+      flashRef.current = Math.max(0, flashRef.current - delta * 2)
     }
   })
 
   return (
-    <group ref={groupRef} position={[0, 0.5, 0]}>
+    <group ref={groupRef} position={[agent.position[0], 0.5, agent.position[2]]}>
       {/* Main unit body - hexagonal prism */}
       <mesh castShadow>
         <cylinderGeometry args={[0.4, 0.5, 0.8, 6]} />
         <meshStandardMaterial
-          color={CYAN}
-          emissive={CYAN}
-          emissiveIntensity={0.3}
+          color={colors.primary}
+          emissive={colors.emissive}
+          emissiveIntensity={agent.status === 'working' ? 0.6 : 0.3}
           metalness={0.8}
           roughness={0.2}
         />
@@ -46,44 +87,71 @@ function Unit({ targetPosition }: { targetPosition: THREE.Vector3 }) {
       <mesh position={[0, 0.45, 0]} castShadow>
         <cylinderGeometry args={[0.25, 0.35, 0.15, 6]} />
         <meshStandardMaterial
-          color={CYAN}
-          emissive={CYAN}
-          emissiveIntensity={0.6}
+          color={colors.primary}
+          emissive={colors.emissive}
+          emissiveIntensity={agent.status === 'error' ? 1.0 : 0.6}
           metalness={0.9}
           roughness={0.1}
         />
       </mesh>
 
       {/* Inner core light */}
-      <pointLight color={CYAN} intensity={2} distance={3} />
+      <pointLight
+        color={agent.status === 'error' ? '#ef4444' : colors.primary}
+        intensity={agent.status === 'working' ? 4 : 2}
+        distance={3}
+      />
 
       {/* Selection ring - rotates around unit */}
       <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
         <ringGeometry args={[0.7, 0.75, 32]} />
-        <meshBasicMaterial color={GREEN} transparent opacity={0.8} side={THREE.DoubleSide} />
+        <meshBasicMaterial color={statusColor} transparent opacity={0.8} side={THREE.DoubleSide} />
       </mesh>
 
-      {/* Selection brackets - 4 corner indicators */}
-      <SelectionBrackets />
+      {/* Selection brackets */}
+      <SelectionBrackets color={statusColor} />
+
+      {/* Progress ring for working status */}
+      {agent.status === 'working' && agent.progress !== undefined && (
+        <ProgressRing progress={agent.progress} />
+      )}
+
+      {/* Agent type label (floating text would need troika-three-text, using simple indicator instead) */}
+      <mesh position={[0, 1.2, 0]}>
+        <sphereGeometry args={[0.08, 8, 8]} />
+        <meshBasicMaterial color={colors.primary} />
+      </mesh>
     </group>
   )
 }
 
+// Progress ring for working agents
+function ProgressRing({ progress }: { progress: number }) {
+  const ringRef = useRef<THREE.Mesh>(null)
+  const progressAngle = (progress / 100) * Math.PI * 2
+
+  return (
+    <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+      <ringGeometry args={[0.9, 0.95, 32, 1, 0, progressAngle]} />
+      <meshBasicMaterial color="#f59e0b" transparent opacity={0.9} side={THREE.DoubleSide} />
+    </mesh>
+  )
+}
+
 // Corner bracket indicators for selection
-function SelectionBrackets() {
+function SelectionBrackets({ color }: { color: string }) {
   const size = 0.9
   const bracketLength = 0.2
-  const material = <meshBasicMaterial color={GREEN} transparent opacity={0.9} />
 
   const Bracket = ({ position, rotation }: { position: [number, number, number]; rotation: number }) => (
     <group position={position} rotation={[Math.PI / 2, rotation, 0]}>
       <mesh position={[bracketLength / 2, 0, 0]}>
         <boxGeometry args={[bracketLength, 0.02, 0.02]} />
-        {material}
+        <meshBasicMaterial color={color} transparent opacity={0.9} />
       </mesh>
       <mesh position={[0, bracketLength / 2, 0]}>
         <boxGeometry args={[0.02, bracketLength, 0.02]} />
-        {material}
+        <meshBasicMaterial color={color} transparent opacity={0.9} />
       </mesh>
     </group>
   )
@@ -99,14 +167,16 @@ function SelectionBrackets() {
 }
 
 // Move target indicator - pulsing ring on the ground
-function MoveIndicator({ position, visible }: { position: THREE.Vector3; visible: boolean }) {
+function MoveIndicator({ position, agentType }: { position: [number, number, number]; agentType?: AgentType }) {
   const ringRef = useRef<THREE.Mesh>(null)
   const outerRingRef = useRef<THREE.Mesh>(null)
   const scaleRef = useRef(1)
   const opacityRef = useRef(1)
 
+  const color = agentType ? AGENT_COLORS[agentType].primary : '#00ff88'
+
   useFrame((_, delta) => {
-    if (!visible || !ringRef.current || !outerRingRef.current) return
+    if (!ringRef.current || !outerRingRef.current) return
 
     // Pulse animation
     scaleRef.current += delta * 2
@@ -125,79 +195,77 @@ function MoveIndicator({ position, visible }: { position: THREE.Vector3; visible
     }
   })
 
-  if (!visible) return null
-
   return (
-    <group position={[position.x, 0.02, position.z]}>
+    <group position={[position[0], 0.02, position[2]]}>
       {/* Static inner ring */}
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.15, 0.2, 32]} />
-        <meshBasicMaterial color={GREEN} transparent opacity={0.8} />
+        <meshBasicMaterial color={color} transparent opacity={0.8} />
       </mesh>
 
       {/* Pulsing outer ring */}
       <mesh ref={outerRingRef} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.3, 0.35, 32]} />
-        <meshBasicMaterial color={GREEN} transparent opacity={0.6} />
+        <meshBasicMaterial color={color} transparent opacity={0.6} />
       </mesh>
 
       {/* Center cross */}
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[0.3, 0.03]} />
-        <meshBasicMaterial color={GREEN} transparent opacity={0.9} />
+        <meshBasicMaterial color={color} transparent opacity={0.9} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, Math.PI / 2]}>
         <planeGeometry args={[0.3, 0.03]} />
-        <meshBasicMaterial color={GREEN} transparent opacity={0.9} />
+        <meshBasicMaterial color={color} transparent opacity={0.9} />
       </mesh>
     </group>
   )
 }
 
-// Ground plane with click detection
-function Ground({ onGroundClick }: { onGroundClick: (point: THREE.Vector3) => void }) {
-  const meshRef = useRef<THREE.Mesh>(null)
+// Ground plane
+function Ground() {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+      <planeGeometry args={[100, 100]} />
+      <meshStandardMaterial color={BACKGROUND} metalness={0.1} roughness={0.9} />
+    </mesh>
+  )
+}
 
-  const handlePointerDown = useCallback((e: THREE.Event & { point: THREE.Vector3 }) => {
-    e.stopPropagation()
-    onGroundClick(e.point)
-  }, [onGroundClick])
+// All move indicators
+function MoveIndicators() {
+  const indicators = useMoveIndicators()
+  const agents = useAgentStore((state) => state.agents)
+
+  // Auto-clear old indicators
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now()
+      indicators.forEach(([id, indicator]) => {
+        if (now - indicator.timestamp > 3000) {
+          useAgentStore.getState().clearMoveIndicator(id)
+        }
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [indicators])
 
   return (
-    <mesh
-      ref={meshRef}
-      rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, 0, 0]}
-      receiveShadow
-      onPointerDown={handlePointerDown}
-    >
-      <planeGeometry args={[100, 100]} />
-      <meshStandardMaterial
-        color={BACKGROUND}
-        metalness={0.1}
-        roughness={0.9}
-      />
-    </mesh>
+    <>
+      {indicators.map(([agentId, indicator]) => (
+        <MoveIndicator
+          key={`${agentId}-${indicator.timestamp}`}
+          position={indicator.position}
+          agentType={agents.get(agentId)?.type}
+        />
+      ))}
+    </>
   )
 }
 
 // Main 3D scene
 function Scene() {
-  const [targetPosition, setTargetPosition] = useState(new THREE.Vector3(0, 0, 0))
-  const [moveIndicator, setMoveIndicator] = useState({
-    position: new THREE.Vector3(),
-    visible: false,
-    key: 0
-  })
-
-  const handleGroundClick = useCallback((point: THREE.Vector3) => {
-    setTargetPosition(new THREE.Vector3(point.x, 0, point.z))
-    setMoveIndicator({
-      position: point.clone(),
-      visible: true,
-      key: Date.now()
-    })
-  }, [])
+  const agents = useAgents()
 
   return (
     <>
@@ -216,10 +284,10 @@ function Scene() {
       />
 
       {/* Subtle cyan accent light */}
-      <pointLight position={[0, 10, 0]} color={CYAN} intensity={0.5} />
+      <pointLight position={[0, 10, 0]} color="#00f3ff" intensity={0.5} />
 
       {/* Ground */}
-      <Ground onGroundClick={handleGroundClick} />
+      <Ground />
 
       {/* Grid overlay */}
       <Grid
@@ -227,25 +295,23 @@ function Scene() {
         args={[100, 100]}
         cellSize={1}
         cellThickness={0.5}
-        cellColor={CYAN}
+        cellColor="#00f3ff"
         sectionSize={5}
         sectionThickness={1}
-        sectionColor={CYAN}
+        sectionColor="#00f3ff"
         fadeDistance={50}
         fadeStrength={1}
         followCamera={false}
         infiniteGrid={true}
       />
 
-      {/* Unit */}
-      <Unit targetPosition={targetPosition} />
+      {/* Render all agents */}
+      {agents.map((agent) => (
+        <Unit key={agent.id} agent={agent} />
+      ))}
 
-      {/* Move indicator */}
-      <MoveIndicator
-        key={moveIndicator.key}
-        position={moveIndicator.position}
-        visible={moveIndicator.visible}
-      />
+      {/* Move indicators */}
+      <MoveIndicators />
 
       {/* Camera controls */}
       <OrbitControls
@@ -264,6 +330,15 @@ function Scene() {
 }
 
 function App() {
+  const handleEvent = useAgentStore((state) => state.handleEvent)
+  const agents = useAgents()
+
+  const onEvent = useCallback((event: Parameters<typeof handleEvent>[0]) => {
+    handleEvent(event)
+  }, [handleEvent])
+
+  const { connected } = useWebSocket(onEvent)
+
   return (
     <div style={{
       width: '100vw',
@@ -324,15 +399,17 @@ function App() {
           letterSpacing: '1px',
           color: 'rgba(255,255,255,0.5)'
         }}>
-          <span>UNITS: <span style={{ color: '#00ff88' }}>1</span></span>
-          <span>STATUS: <span style={{ color: '#00ff88' }}>NOMINAL</span></span>
+          <span>UNITS: <span style={{ color: '#00ff88' }}>{agents.length}</span></span>
+          <span>UPLINK: <span style={{ color: connected ? '#00ff88' : '#ef4444' }}>
+            {connected ? 'CONNECTED' : 'OFFLINE'}
+          </span></span>
           <div style={{
             width: '8px',
             height: '8px',
             borderRadius: '50%',
-            background: '#00ff88',
-            boxShadow: '0 0 10px #00ff88',
-            animation: 'pulse 2s infinite'
+            background: connected ? '#00ff88' : '#ef4444',
+            boxShadow: `0 0 10px ${connected ? '#00ff88' : '#ef4444'}`,
+            animation: connected ? 'pulse 2s infinite' : 'none'
           }} />
         </div>
       </header>
@@ -369,8 +446,12 @@ function App() {
         color: 'rgba(255,255,255,0.4)',
         zIndex: 10
       }}>
-        <span>CLICK GROUND TO MOVE UNIT • DRAG TO ORBIT • SCROLL TO ZOOM</span>
-        <span>TACTICAL_INTERFACE v0.2.0</span>
+        <span>
+          {connected
+            ? 'RECEIVING TELEMETRY • DRAG TO ORBIT • SCROLL TO ZOOM'
+            : 'WAITING FOR SERVER CONNECTION...'}
+        </span>
+        <span>TACTICAL_INTERFACE v0.3.0</span>
       </footer>
 
       <style>{`
